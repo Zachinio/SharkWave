@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+package main_messages;
+
+message Packet {
+    string type =1;
+    string requestId=2;
+    PacketData data = 3;
+}
+
+message FSRequest {
+    repeated FileRequest read = 1;
+    repeated FileRequest list = 2;
+
+    message FileRequest {
+        string dir =1;
+        repeated string ignore=2;
+    }
+}
+
+message FSResponse {
+    repeated bytes read = 1;
+    repeated bytes list = 2;
+}
+
+message ExecRequest {
+     repeated Command commands = 1;
+}
+
+message ExecResponse {
+     repeated Command commands = 1;
+}
+
+message StopDiscovery {
+}
+
+message PacketData {
+    FSRequest       fsRequest =1;
+    FSResponse      fsResponse =2;
+    ExecRequest     execRequest =3;
+    ExecResponse    execResponse =4;
+    StopDiscovery   stopDiscovery =5;
+}
+
+message File {
+    bytes path =1;
+    bytes content =2;
+}
+
+message Command {
+    string command =1;
+    string outputFileName = 2;
+}
