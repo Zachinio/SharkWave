@@ -2,18 +2,25 @@
 #include <string>
 #include <dlfcn.h>
 #include <logger/Logger.hpp>
+#include "utils/NetworkUtils.h"
 #include "PcapDefines.h"
+#include "utils/ShellUtils.h"
+#include "PacketType.h"
 
 void showUsage();
+
+bool isPidOwner(u_int port, PacketType type);
 
 void startSniffing();
 
 using std::string;
 using std::stoi;
+using std::to_string;
 
 int pid = -1;
-int packetsCount = 100;
+int packetsCount = 10000;
 char *device;
+string localIp;
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -39,8 +46,9 @@ int main(int argc, char *argv[]) {
             printf("Unknown parameter %s\n", parameter);
             return -2;
         }
-        startSniffing();
     }
+    startSniffing();
+
 
     try {
         Logger::Log("------------------- Start of Log -------------------\n");
@@ -54,8 +62,81 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
-    printf("packet recevied\n");
+bool isPidOwner(u_int port, PacketType type) {
+    string param = getParamForType(type);
+    int offset = getOffsetByType(type);
+    string command = "ss -pn" + param + " | grep 'pid=" + to_string(pid) + "'";
+    const string &ss = executeCommand(command);
+
+    std::stringstream stream(ss);
+    std::vector<std::string> result{std::istream_iterator<std::string>(stream), {}};
+    if (result.size() < offset) {
+        return false;
+    }
+
+    for (int i = 0; i + offset - 2 < result.size(); i += offset) {
+        string address = result[i + offset - 3];
+        int colonIndex = address.find_last_of(':');
+        if (colonIndex > 0) {
+            string portFound = address.substr(colonIndex + 1, address.size() - colonIndex);
+            try {
+                int portFoundInt = stoi(portFound);
+                return port == portFoundInt;
+            } catch (runtime_error &err) {
+
+            }
+        }
+    }
+    return false;
+}
+
+void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
+    const struct ether_header *ethernetHeader;
+    const struct ip *ipHeader;
+    const struct tcphdr *tcpHeader;
+    const struct udphdr *udpHeader;
+    char sourceIP[INET_ADDRSTRLEN];
+    char destIP[INET_ADDRSTRLEN];
+    u_int sourcePort = 0, destPort;
+    u_char *data;
+
+    ethernetHeader = (struct ether_header *) packet;
+    if (ntohs(ethernetHeader->ether_type) == ETHERTYPE_IP) {
+
+        ipHeader = (struct ip *) (packet + sizeof(struct ether_header));
+        inet_ntop(AF_INET, &(ipHeader->ip_src), sourceIP, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(ipHeader->ip_dst), destIP, INET_ADDRSTRLEN);
+        if (strcmp(sourceIP, localIp.c_str()) != 0) {
+            return; /*Not a packet from the device */
+        }
+//        printf("--------------------\n");
+
+        if (ipHeader->ip_p == IPPROTO_TCP) {
+            tcpHeader = (struct tcphdr *) (packet + sizeof(struct ether_header) +
+                                           sizeof(struct ip));
+            sourcePort = ntohs(tcpHeader->source);
+            destPort = ntohs(tcpHeader->dest);
+            data = (u_char *) (packet + sizeof(struct ether_header) + sizeof(struct ip) +
+                               sizeof(struct tcphdr));
+            isPidOwner(sourcePort, PacketType::tcp);
+
+//            printf("tcp\n");
+//            printf("port %d, ip %s\n", sourcePort, destIP);
+        } else if (ipHeader->ip_p == IPPROTO_UDP) {
+            udpHeader = (struct udphdr *) (packet + sizeof(struct ether_header) +
+                                           sizeof(struct ip));
+            sourcePort = ntohs(udpHeader->source);
+            destPort = ntohs(udpHeader->dest);
+//            printf("udp\n");
+//            printf("port %d, ip %s\n", sourcePort, destIP);
+            isPidOwner(sourcePort, PacketType::udp);
+
+        } else if (ipHeader->ip_p == IPPROTO_ICMP) {
+//            printf("pinging\n");
+//            printf("port %d, ip %s\n", sourcePort, destIP);
+        }
+//        printf("--------------------\n");
+    }
 }
 
 void startSniffing() {
@@ -63,15 +144,20 @@ void startSniffing() {
     char errbuf[PCAP_ERRBUF_SIZE];
 
     if (nullptr == device) {
-        device = (char *)findDevice(libpcap).c_str();
+        device = (char *) findDevice(libpcap).c_str();
     }
+    localIp = getLocalIpAdress();
     Logger::Log("device is: " + string(device));
 
     auto *pcap_open_live = (pcap_open_live_function) dlsym(libpcap, "pcap_open_live");
     auto *pcap_loop = (pcap_loop_function) dlsym(libpcap, "pcap_loop");
+    auto pcap_close = (pcap_close_function) dlsym(libpcap, "pcap_close");
 
     pcap_t *handle = pcap_open_live(device, BUFSIZ, 1, 1000, errbuf);
-    pcap_loop(handle, packetsCount, got_packet, nullptr);
+    pcap_loop(handle, packetsCount, gotPacket, nullptr);
+
+    pcap_close(handle);
+    dlclose(libpcap);
 }
 
 void showUsage() {
