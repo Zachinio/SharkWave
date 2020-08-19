@@ -20,6 +20,7 @@ using std::to_string;
 int pid = -1;
 int packetsCount = 10000;
 char *device;
+string package;
 string localIp;
 
 int main(int argc, char *argv[]) {
@@ -42,17 +43,17 @@ int main(int argc, char *argv[]) {
             device = value;
         } else if (strcmp("--count", parameter) == 0) {
             packetsCount = stoi(value);
+        } else if (strcmp("--package", parameter) == 0) {
+            package = string(value);
         } else {
             printf("Unknown parameter %s\n", parameter);
             return -2;
         }
     }
-    startSniffing();
-
 
     try {
         Logger::Log("------------------- Start of Log -------------------\n");
-
+        startSniffing();
     }
     catch (const std::runtime_error &err) {
         Logger::Log("error" + string(err.what()));
@@ -66,6 +67,13 @@ bool isPidOwner(u_int port, PacketType type) {
     string param = getParamForType(type);
     int offset = getOffsetByType(type);
     string command = "ss -pn" + param + " | grep 'pid=" + to_string(pid) + "'";
+
+    if (package.compare("") != 0) {
+        package = package.size() > 15 ? package.substr(15, package.size() - 15) : package;
+        command = "ss -pn" + param + " | grep '\"" + package + "\"'";
+    }
+
+
     const string &ss = executeCommand(command);
 
     std::stringstream stream(ss);
@@ -81,7 +89,9 @@ bool isPidOwner(u_int port, PacketType type) {
             string portFound = address.substr(colonIndex + 1, address.size() - colonIndex);
             try {
                 int portFoundInt = stoi(portFound);
-                return port == portFoundInt;
+                if (port == portFoundInt) {
+                    return true;
+                }
             } catch (runtime_error &err) {
 
             }
@@ -98,6 +108,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
     char sourceIP[INET_ADDRSTRLEN];
     char destIP[INET_ADDRSTRLEN];
     u_int sourcePort = 0, destPort;
+    PacketType type = PacketType::tcp;
     u_char *data;
 
     ethernetHeader = (struct ether_header *) packet;
@@ -109,7 +120,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         if (strcmp(sourceIP, localIp.c_str()) != 0) {
             return; /*Not a packet from the device */
         }
-//        printf("--------------------\n");
+        printf("--------------------\n");
 
         if (ipHeader->ip_p == IPPROTO_TCP) {
             tcpHeader = (struct tcphdr *) (packet + sizeof(struct ether_header) +
@@ -118,24 +129,19 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             destPort = ntohs(tcpHeader->dest);
             data = (u_char *) (packet + sizeof(struct ether_header) + sizeof(struct ip) +
                                sizeof(struct tcphdr));
-            isPidOwner(sourcePort, PacketType::tcp);
-
-//            printf("tcp\n");
-//            printf("port %d, ip %s\n", sourcePort, destIP);
         } else if (ipHeader->ip_p == IPPROTO_UDP) {
+            type = PacketType::udp;
             udpHeader = (struct udphdr *) (packet + sizeof(struct ether_header) +
                                            sizeof(struct ip));
             sourcePort = ntohs(udpHeader->source);
             destPort = ntohs(udpHeader->dest);
-//            printf("udp\n");
-//            printf("port %d, ip %s\n", sourcePort, destIP);
-            isPidOwner(sourcePort, PacketType::udp);
-
         } else if (ipHeader->ip_p == IPPROTO_ICMP) {
-//            printf("pinging\n");
-//            printf("port %d, ip %s\n", sourcePort, destIP);
+
         }
-//        printf("--------------------\n");
+        printf("packet type: %s\n", getParamForType(type).c_str());
+        printf("sourcePort: %d,destPort %d\n", sourcePort, destPort);
+        printf("packet owned by %d: %s", pid, isPidOwner(sourcePort, type) ? "true" : "false");
+        printf("--------------------\n");
     }
 }
 
@@ -165,4 +171,5 @@ void showUsage() {
     printf("--pid <PID>\n   A pid to sniff its network\n");
     printf("--device <device interface>\n   The device name to sniff\n");
     printf("--count <count>\n   The number of packets to count,default is 10000\n");
+    printf("--package <package>\n   the package name to sniff\n");
 }
