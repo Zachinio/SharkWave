@@ -9,8 +9,8 @@ Tool to sniff network traffic per process id or package name used by libpcap.so 
 There are many tools that can be used in Android to sniff the network traffic like Wireshark and TCPDump, but these tools don't filter the packets by a process id or a package name, therefore Sharkwave is being developed to sniff network of a specific app or any process.
 
 # Current State
-For now, the tool sniffs only one device at the time.
-It's possible to execute SharkWave without a --device argument and the tool would find a device by itself.
+For now, the tool sniffs only one network device at the time.
+It's possible to execute SharkWave without a --device argument and the tool would find a network device by using the pcap_lookupdev method in libpcap.
 Only TCP/UDP packets are filtered now.
 
 
