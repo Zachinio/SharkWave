@@ -69,7 +69,7 @@ bool isPidOwner(u_int port, PacketType type) {
     string command = "ss -pn" + param + " | grep 'pid=" + to_string(pid) + "'";
 
     if (package.compare("") != 0) {
-        package = package.size() > 15 ? package.substr(15, package.size() - 15) : package;
+        package = package.size() > 15 ? package.substr(package.size() - 15, 15) : package;
         command = "ss -pn" + param + " | grep '\"" + package + "\"'";
     }
 
@@ -107,7 +107,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
     const struct udphdr *udpHeader;
     char sourceIP[INET_ADDRSTRLEN];
     char destIP[INET_ADDRSTRLEN];
-    u_int sourcePort = 0, destPort;
+    u_int sourcePort = 0, destPort = 0;
     PacketType type = PacketType::tcp;
     u_char *data;
 
@@ -120,8 +120,6 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         if (strcmp(sourceIP, localIp.c_str()) != 0) {
             return; /*Not a packet from the device */
         }
-        printf("--------------------\n");
-
         if (ipHeader->ip_p == IPPROTO_TCP) {
             tcpHeader = (struct tcphdr *) (packet + sizeof(struct ether_header) +
                                            sizeof(struct ip));
@@ -138,10 +136,19 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         } else if (ipHeader->ip_p == IPPROTO_ICMP) {
 
         }
-        printf("packet type: %s\n", getParamForType(type).c_str());
-        printf("sourcePort: %d,destPort %d\n", sourcePort, destPort);
-        printf("packet owned by %d: %s", pid, isPidOwner(sourcePort, type) ? "true" : "false");
-        printf("--------------------\n");
+        if (isPidOwner(sourcePort, type)) {
+            printf("--------------------\n");
+            printf("source:\n");
+            printf("address: %s\n", sourceIP);
+            printf("port: %d\n", sourcePort);
+
+            printf("destination:\n");
+            printf("address: %s\n", destIP);
+            printf("port: %d\n", destPort);
+
+            printf("process/package: %s\n", pid == -1 ? package.c_str() : to_string(pid).c_str());
+            printf("--------------------\n");
+        }
     }
 }
 
