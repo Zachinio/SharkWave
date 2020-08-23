@@ -73,7 +73,6 @@ bool isPidOwner(u_int port, PacketType type) {
         command = "ss -pn" + param + " | grep '\"" + package + "\"'";
     }
 
-
     const string &ss = executeCommand(command);
 
     std::stringstream stream(ss);
@@ -159,14 +158,18 @@ void startSniffing() {
     if (nullptr == device) {
         device = (char *) findDevice(libpcap).c_str();
     }
-    localIp = getLocalIpAdress();
-    Logger::Log("device is: " + string(device));
+    localIp = getLocalIpAddress(device);
+    Logger::Log("device is: " + string(device) + "addr: " + localIp);
 
     auto *pcap_open_live = (pcap_open_live_function) dlsym(libpcap, "pcap_open_live");
     auto *pcap_loop = (pcap_loop_function) dlsym(libpcap, "pcap_loop");
     auto pcap_close = (pcap_close_function) dlsym(libpcap, "pcap_close");
 
     pcap_t *handle = pcap_open_live(device, BUFSIZ, 1, 1000, errbuf);
+    if (nullptr == handle) {
+        printf("network device is not ready\n");
+        return;
+    }
     pcap_loop(handle, packetsCount, gotPacket, nullptr);
 
     pcap_close(handle);
