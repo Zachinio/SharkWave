@@ -2,25 +2,28 @@
 
 
 enum PacketType {
-    tcp, udp
+    tcp, udp,icmp
 };
 
-string getParamForType(PacketType type) {
+string getProtoclName(PacketType type) {
     if (type == PacketType::tcp) {
-        return "t";
+        return "tcp";
     }
     if (type == PacketType::udp) {
-        return "u";
+        return "udp";
     }
-    return "a";
+    if (type == PacketType::icmp) {
+        return "icmp";
+    }
+    return "tcp";
 }
 
 int getOffsetByType(PacketType type) {
     if (type == PacketType::tcp) {
-        return 6;
+        return 18;
     }
     if (type == PacketType::udp) {
-        return 5;
+        return 16;
     }
-    return 6;
+    return 16;
 }

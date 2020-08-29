@@ -9,17 +9,20 @@
 
 void showUsage();
 
-bool isPidOwner(u_int port, PacketType type);
+bool isPidOwner(PacketType type, u_int sPort, u_int dPort, char *sIp, char *dIp);
 
 void startSniffing();
+
+void printPacketInfo(char sourceIP[16], u_int sourcePort, char destIP[16], u_int destPort,PacketType type);
 
 using std::string;
 using std::stoi;
 using std::to_string;
 
-int pid = -1;
-int packetsCount = 10000;
+char *pid;
 char *device;
+int packetsCount = 10000;
+
 string package;
 string localIp;
 
@@ -31,20 +34,26 @@ int main(int argc, char *argv[]) {
     /* TODO handle empty arguments */
     for (int i = 1; i < argc; i += 2) {
         if (i + 1 == argc) {
-            printf("no value passed for %s\n", argv[i]);
+            printf("no value passed\n");
             return -1;
         }
         char *parameter = argv[i];
         char *value = argv[i + 1];
 
         if (strcmp("--pid", parameter) == 0) {
-            pid = stoi(value);
+            pid = value;
         } else if (strcmp("--device", parameter) == 0) {
             device = value;
         } else if (strcmp("--count", parameter) == 0) {
             packetsCount = stoi(value);
         } else if (strcmp("--package", parameter) == 0) {
             package = string(value);
+            string pidFound = executeCommand("pidof " + package);
+            if (pidFound.empty()) {
+                printf("Couldn't find a pid for this package\n");
+                return -1;
+            }
+            pid = (char *) pidFound.substr(0, pidFound.length() - 1).c_str();
         } else {
             printf("Unknown parameter %s\n", parameter);
             return -2;
@@ -63,47 +72,33 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-bool isPidOwner(u_int port, PacketType type) {
-    string param = getParamForType(type);
+bool isPidOwner(PacketType type, u_int sPort, u_int dPort, char *sIp, char *dIp) {
+    string protocolName = getProtoclName(type);
     int offset = getOffsetByType(type);
-    string command = "ss -pn" + param + " | grep 'pid=" + to_string(pid) + "'";
-
-    if (package.compare("") != 0) {
-        package = package.size() > 15 ? package.substr(package.size() - 15, 15) : package;
-        command = "ss -pn" + param + " | grep '\"" + package + "\"'";
+    string command = string("cat /proc/")
+            .append(pid)
+            .append("/net/nf_conntrack | grep ")
+            .append(protocolName)
+            .append(" | grep src=")
+            .append(sIp)
+            .append(" | grep dst=")
+            .append(dIp);
+    if (PacketType::icmp != type) {
+        command.append(" | grep sport=")
+                .append(to_string(sPort))
+                .append(" | grep dport=")
+                .append(to_string(dPort));
     }
+    const string &networkInfo = executeCommand(command);
 
-    const string &ss = executeCommand(command);
-
-    std::stringstream stream(ss);
+    std::stringstream stream(networkInfo);
     std::vector<std::string> result{std::istream_iterator<std::string>(stream), {}};
-    if (result.size() < offset) {
-        return false;
-    }
-
-    for (int i = 0; i + offset - 2 < result.size(); i += offset) {
-        string address = result[i + offset - 3];
-        int colonIndex = address.find_last_of(':');
-        if (colonIndex > 0) {
-            string portFound = address.substr(colonIndex + 1, address.size() - colonIndex);
-            try {
-                int portFoundInt = stoi(portFound);
-                if (port == portFoundInt) {
-                    return true;
-                }
-            } catch (runtime_error &err) {
-
-            }
-        }
-    }
-    return false;
+    return result.size() >= offset;
 }
 
 void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
     const struct ether_header *ethernetHeader;
     const struct ip *ipHeader;
-    const struct tcphdr *tcpHeader;
-    const struct udphdr *udpHeader;
     char sourceIP[INET_ADDRSTRLEN];
     char destIP[INET_ADDRSTRLEN];
     u_int sourcePort = 0, destPort = 0;
@@ -120,6 +115,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             return; /*Not a packet from the device */
         }
         if (ipHeader->ip_p == IPPROTO_TCP) {
+            const struct tcphdr *tcpHeader;
             tcpHeader = (struct tcphdr *) (packet + sizeof(struct ether_header) +
                                            sizeof(struct ip));
             sourcePort = ntohs(tcpHeader->source);
@@ -128,27 +124,34 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
                                sizeof(struct tcphdr));
         } else if (ipHeader->ip_p == IPPROTO_UDP) {
             type = PacketType::udp;
+            const struct udphdr *udpHeader;
             udpHeader = (struct udphdr *) (packet + sizeof(struct ether_header) +
                                            sizeof(struct ip));
             sourcePort = ntohs(udpHeader->source);
             destPort = ntohs(udpHeader->dest);
         } else if (ipHeader->ip_p == IPPROTO_ICMP) {
-
+            type = PacketType::icmp;
         }
-        if (isPidOwner(sourcePort, type)) {
-            printf("--------------------\n");
-            printf("source:\n");
-            printf("address: %s\n", sourceIP);
-            printf("port: %d\n", sourcePort);
-
-            printf("destination:\n");
-            printf("address: %s\n", destIP);
-            printf("port: %d\n", destPort);
-
-            printf("process/package: %s\n", pid == -1 ? package.c_str() : to_string(pid).c_str());
-            printf("--------------------\n");
+        if (isPidOwner(type, sourcePort, destPort, sourceIP, destIP)) {
+            printPacketInfo(sourceIP, sourcePort, destIP, destPort,type);
         }
     }
+}
+
+void printPacketInfo(char *sourceIP, u_int sourcePort, char *destIP, u_int destPort,PacketType type) {
+    printf("--------------------\n");
+    printf("%s\n",getProtoclName(type).c_str());
+    printf("source:\n");
+    printf("address: %s\n", sourceIP);
+    printf("port: %d\n", sourcePort);
+
+    printf("destination:\n");
+    printf("address: %s\n", destIP);
+    printf("port: %d\n", destPort);
+
+    printf("process/package: %s\n", package.empty() ? pid : package.c_str());
+    printf("--------------------\n");
+
 }
 
 void startSniffing() {
@@ -159,7 +162,7 @@ void startSniffing() {
         device = (char *) findDevice(libpcap).c_str();
     }
     localIp = getLocalIpAddress(device);
-    Logger::Log("device is: " + string(device) + "addr: " + localIp);
+    Logger::Log("device is: " + string(device) + "addr: " + localIp + ",pid: " + string(pid));
 
     auto *pcap_open_live = (pcap_open_live_function) dlsym(libpcap, "pcap_open_live");
     auto *pcap_loop = (pcap_loop_function) dlsym(libpcap, "pcap_loop");
